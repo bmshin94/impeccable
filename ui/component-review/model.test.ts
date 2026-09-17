@@ -72,3 +72,17 @@ test('reviewed queue includes feedback, pending queue includes stale decisions',
   expect(packet.components.filter(c=>inReviewQueue(c,draft,'pending')).map(c=>c.id)).toEqual(['art']);
   expect(packet.components.filter(c=>inReviewQueue(c,draft,'reviewed')).map(c=>c.id)).toEqual(['control']);
 });
+
+test('explicit pattern decisions preserve prior decisions, raster reviews and open edits', async () => {
+  const {reviewPeers,decisionTargets}=await import('./model');
+  const pattern={...packet.components[1],reviewGroup:'Room labels'};
+  const p={...packet,components:[{...packet.components[0],reviewGroup:'Room labels'},pattern,
+    ...['b','c','d'].map(id=>({...pattern,id,revision:id}))]};
+  const draft=newDraft(p);
+  draft.decisions.b={revision:'b',action:'revise',feedback:'Keep this specific repair',split:false};
+  expect(reviewPeers(p,pattern).map(c=>c.id)).toEqual(['control','b','c','d']);
+  expect(decisionTargets(p,draft,pattern,false).map(c=>c.id)).toEqual(['control']);
+  expect(decisionTargets(p,draft,pattern,true,['c']).map(c=>c.id)).toEqual(['control','d']);
+  expect(draft.decisions.b.feedback).toBe('Keep this specific repair');
+  expect(reviewPeers(p,packet.components[0])).toEqual([packet.components[0]]);
+});

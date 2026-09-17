@@ -641,3 +641,21 @@ fn visual_approvals_survive_shared_source_edits_but_not_changed_scope_or_pixels(
     let changed = store::read(&dir.join("current.json")).unwrap();
     assert!(changed["draft"]["decisions"]["control"].is_null());
 }
+
+#[test]
+fn review_groups_preserve_instances_and_require_a_shared_code_document() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.project.join(".impeccable/build")).unwrap();
+    fs::write(f.project.join(".impeccable/build/spec.json"), r#"{"regions":[]}"#).unwrap();
+    let mut input=f.manifest(); input["stage"]=json!("components");
+    input["components"][1]["reviewGroup"]=json!("Labels");
+    let mut peer=input["components"][1].clone(); peer["id"]=json!("peer");
+    input["components"].as_array_mut().unwrap().push(peer);
+    let (packet, _) = manifest::freeze(&f.project, &input).unwrap();
+    assert_eq!(packet["components"].as_array().unwrap().len(),3);
+    assert_eq!(packet["components"][2]["reviewGroup"],"Labels");
+    let mut invalid=input.clone();invalid["components"][0]["reviewGroup"]=json!("Labels");
+    assert!(manifest::freeze(&f.project,&invalid).unwrap_err().contains("raster assets remain individual"));
+    input["components"][2]["preview"]["path"]=json!("different.html");
+    assert!(manifest::freeze(&f.project,&input).unwrap_err().contains("share one code document"));
+}

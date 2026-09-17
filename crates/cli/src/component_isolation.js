@@ -27,6 +27,28 @@
       main: owns ? computed.visibility : 'hidden',
       pseudo: ['::before','::after','::marker'].map(pseudo => owns ? getComputedStyle(element, pseudo).visibility : 'hidden') };
   });
+  // Record visible layout/text extents before isolation. A small wrapper can
+  // have overflowing children; its border box alone would certify a clipped crop.
+  let paint = {left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom};
+  function include(bounds, element) {
+    let b = {left:bounds.left,top:bounds.top,right:bounds.right,bottom:bounds.bottom};
+    for(let parent=element;parent;parent=parent.parentElement){
+      const style=getComputedStyle(parent), clip=parent.getBoundingClientRect();
+      if(/hidden|clip|scroll|auto/.test(style.overflowX)){b.left=Math.max(b.left,clip.left);b.right=Math.min(b.right,clip.right);}
+      if(/hidden|clip|scroll|auto/.test(style.overflowY)){b.top=Math.max(b.top,clip.top);b.bottom=Math.min(b.bottom,clip.bottom);}
+    }
+    if(b.right<=b.left||b.bottom<=b.top)return;
+    paint={left:Math.min(paint.left,b.left),top:Math.min(paint.top,b.top),right:Math.max(paint.right,b.right),bottom:Math.max(paint.bottom,b.bottom)};
+  }
+  elements.forEach((element,index)=>{
+    if(!visibility[index].owns || visibility[index].main!=='visible')return;
+    include(element.getBoundingClientRect(),element.parentElement);
+    for(const node of element.childNodes){
+      if(node.nodeType!==Node.TEXT_NODE||!node.textContent.trim())continue;
+      const range=document.createRange();range.selectNodeContents(node);
+      for(const bounds of range.getClientRects())include(bounds,element);
+    }
+  });
   // Apply only after reading all original computed styles. Descendant components
   // keep their layout space but cannot paint inside their parent's preview.
   if (document.querySelector('[data-impeccable-capture]')) throw Error('Reserved capture attribute is already present.');
@@ -55,5 +77,6 @@
   const after = selected.element.getBoundingClientRect();
   if (['x','y','width','height'].some(key => Math.abs(rect[key] - after[key]) > .01)) throw Error('Isolating the component changed its layout.');
   return { method: 'dom-component-v1', selector: selected.selector, excludedComponents: otherRoots.map(root => root.id),
-    bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
+    bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    paintBounds: {x:paint.left,y:paint.top,width:paint.right-paint.left,height:paint.bottom-paint.top} };
 }

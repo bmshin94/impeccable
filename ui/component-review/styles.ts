@@ -1,5 +1,11 @@
 import { appLayout } from './app-layout';
 export const styles = `
+.review-peers{display:grid;gap:8px;padding:8px 0 12px;font-size:12px}
+.review-peers strong span{font-weight:400}.review-peers>div{display:flex;flex-wrap:wrap;gap:4px}
+.review-peers button{min-width:28px;min-height:28px;padding:3px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:inherit}
+.review-peers button[aria-pressed="true"]{background:var(--teal);color:white}
+.review-peers label{display:flex;align-items:center;gap:6px}
+
 :host{display:block;color:var(--color-text,#292929);font:14px/1.45 var(--font-sans,Arial,sans-serif);--line:var(--color-border,#ddd);--paper:var(--color-panel,#fff);--muted:var(--color-muted,#666);--teal:var(--color-patina,#28625e);--warn:var(--color-warn,#8a5b30);--selection:#43897f}
 *{box-sizing:border-box}h1,h2,p,figure{margin:0}button,input,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:inherit;padding:8px 12px;min-height:36px}button:hover{border-color:var(--teal);color:var(--teal)}button:disabled{cursor:default;opacity:.45}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--teal);outline-offset:3px}button[aria-pressed=true]{box-shadow:inset 0 0 0 1px var(--teal)}input[type=checkbox]{accent-color:var(--teal);width:16px;height:16px;flex-shrink:0}textarea,input:not([type=checkbox]){width:100%;background:var(--paper);color:inherit;border:1px solid #999;border-radius:4px;padding:9px 10px}textarea{resize:vertical;min-height:80px}::selection{background:#c7ddd8}a{color:var(--teal)}
 .review{max-width:1600px;margin:auto;padding:24px 28px 0}header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:16px}h1{font:400 40px/1.05 var(--font-display,Arial,sans-serif);letter-spacing:-.02em}header p{margin-top:8px;font-size:15px}header p span,.medium{color:var(--muted)}.badge{border:1px solid var(--line);padding:5px 10px;font-size:12px;white-space:nowrap}.preview-note{color:var(--muted);font-size:12px;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:24px}

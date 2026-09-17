@@ -6,6 +6,10 @@ Use this checkpoint on comp-led builds after producing the initial component kit
 
 Keep the measured spec's region IDs. Include every visible region: produced raster assets and working HTML/CSS/SVG for text, controls, patterns, decoration and layout elements. A region rendered in code needs an actual review document, not a promise to implement it later. Use semantic HTML for content and controls. Do not flatten the page or combine unrelated regions to avoid review. Report omitted regions so the user can mark what is missing.
 
+For a repeated code pattern, give its instances the same `reviewGroup` name. Keep every instance and its region ID in the manifest, in the same kit document. The user can inspect instances and explicitly apply one decision to the unreviewed group. Unique raster assets still require their own review; grouping never removes inventory or gate checks.
+
+Before producing assets, inspect each reference crop against its named subject. Coarse grid cells and automatic ink snapping can include neighbors or omit parts of a compound element. Correct the measured region with an explicit normalized `box`; do not build to a known bad crop. Check the code preview contains the complete component before presenting it. The capture tool refuses content cut off by the review crop.
+
 Write `.impeccable/review/components.json` with this manifest format:
 
 ```json
@@ -23,7 +27,7 @@ Write `.impeccable/review/components.json` with this manifest format:
       "box": {"x": 0.5, "y": 0.2, "w": 0.45, "h": 0.7},
       "note": "Produced cutout; positioned over the page ground.",
       "preview": {"kind": "image", "path": "assets/illustration.png"},
-      "dependencies": [".impeccable/build/spec.json"]
+      "dependencies": []
     },
     {
       "id": "headline",
@@ -32,13 +36,13 @@ Write `.impeccable/review/components.json` with this manifest format:
       "box": {"x": 0.05, "y": 0.2, "w": 0.4, "h": 0.25},
       "note": "Rendered semantic heading and its typography.",
       "preview": {"kind": "page", "path": ".impeccable/review/components/kit.html", "selector": "#headline"},
-      "dependencies": [".impeccable/build/spec.json", "assets/type.woff2"]
+      "dependencies": ["assets/type.woff2"]
     }
   ]
 }
 ```
 
-The coordinates above only illustrate the schema. Use the approved comp's actual pixel dimensions and each measured region's normalized bounds (`x / width`, `y / height`, `w / width`, `h / height`). Each code preview requires a `selector` matching exactly one component element inside the document body. Shared kit documents are supported: the native capturer preserves layout and authored styles, hides other components, and crops to the measured box. A separately targeted child is excluded from its parent's isolated preview. Background fields therefore show their own paint, not the text and controls laid over them. Place components at the comp coordinates in the review document.
+The coordinates above only illustrate the schema. Use the approved comp's actual pixel dimensions and each measured region's normalized bounds (the spec’s `box` is already normalized; divide only pixel coordinates by comp dimensions). Each code preview requires a `selector` matching exactly one component element inside the document body. Shared kit documents are supported: the native capturer preserves layout and authored styles, hides other components, and crops to the measured box. A separately targeted child is excluded from its parent's isolated preview. Background fields therefore show their own paint, not the text and controls laid over them. Place components at the comp coordinates in the review document.
 
 For a raster placed inside the kit, add `context: {"kind":"page","path":".impeccable/review/components/kit.html","selector":"#illustration"}` and declare that document's dependencies. This identifies its DOM placement so a containing code component excludes it too; the raster preview remains the original image bytes.
 

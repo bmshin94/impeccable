@@ -97,10 +97,10 @@ fn render_page(
             coords[3] * height as f64,
         ];
         if let Some(isolated) = &isolated {
-            let b = &isolated["bounds"];
+            let b = &isolated["paintBounds"];
             let (x, y, w, h) = (b["x"].as_f64().unwrap(), b["y"].as_f64().unwrap(), b["width"].as_f64().unwrap(), b["height"].as_f64().unwrap());
-            if x >= clip[0] + clip[2] || y >= clip[1] + clip[3] || x + w <= clip[0] || y + h <= clip[1] {
-                return Err("component target does not intersect its measured box".into());
+            if x < clip[0] - 1. || y < clip[1] - 1. || x + w > clip[0] + clip[2] + 1. || y + h > clip[1] + clip[3] + 1. {
+                return Err(format!("{}: review crop clips component content. Measured crop [{:.1}, {:.1}, {:.1}, {:.1}], visible content [{x:.1}, {y:.1}, {w:.1}, {h:.1}]. Check the reference region and component layout before asking the user to review it.", isolated["selector"].as_str().unwrap_or("component"), clip[0], clip[1], clip[2], clip[3]));
             }
         }
         let first = page
@@ -388,6 +388,19 @@ mod tests {
         // Match the manifest's tolerance for normalized floating-point edges.
         let crop = crop_viewport(&png,3,3,[1.5,1.5,1.500001,1.500001]).unwrap();
         assert_eq!(impeccable_comp::png_io::decode_png(&crop).unwrap().image.data,pixels.data);
+    }
+    #[test]
+    #[ignore = "requires Chromium"]
+    fn isolated_capture_refuses_overflow_clipped_by_review_box() {
+        let image=impeccable_comp::raster::create_image(200,100,[255,255,255,255]);
+        let reference=impeccable_comp::png_io::encode_png(&image,&[]).unwrap();
+        let html=br#"<!doctype html><style>html,body{margin:0}#nav{width:60px;height:40px}span{display:block;width:150px;height:20px;background:red}</style><nav id="nav"><span></span></nav>"#;
+        let inputs=BTreeMap::from([("comp.png".into(),reference),("kit.html".into(),html.to_vec())]);
+        let original=json!({"schemaVersion":2,"stage":"components","comp":{"url":"/files/comp.png","width":200,"height":100},"components":[{"id":"nav","box":{"x":0,"y":0,"w":0.3,"h":0.4},"preview":{"kind":"page","url":"/files/kit.html","selector":"#nav"},"dependencies":[]}]});
+        let error=NativeComponentCapturer.capture(&mut original.clone(),&inputs).err().unwrap();
+        assert!(error.contains("review crop clips component content"),"{error}");
+        let mut valid=original;valid["components"][0]["box"]["w"]=json!(0.75);
+        NativeComponentCapturer.capture(&mut valid,&inputs).unwrap();
     }
     #[test]
     fn component_crops_copy_verified_pixels_without_resizing_or_synthetic_edges() {

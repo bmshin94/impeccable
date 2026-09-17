@@ -1,6 +1,7 @@
 export type Box = { x: number; y: number; w: number; h: number };
 export type Component = {
   id: string; revision: string; name: string; medium: string; note: string; box: Box;
+  reviewGroup?: string;
   material?: { format: string; width: number; height: number; alpha: 'transparent' | 'opaque' | 'unknown' };
   context?: { kind?: 'image' | 'page'; sourceKind?: 'page'; url: string; layering: string };
   thumbnail?: { url: string; box?: Box };
@@ -95,4 +96,15 @@ export type InventoryFilter = 'pending' | 'reviewed' | 'all';
 /** Repair requests are completed review decisions, not work left for the reviewer. */
 export function inReviewQueue(component: Component, draft: Draft, filter: InventoryFilter) {
   return filter === 'all' || (componentState(component, draft).kind === 'pending') === (filter === 'pending');
+}
+
+/** Grouping is authored explicitly, never guessed from names or visual similarity.
+ * Decisions remain per component; existing decisions and unsaved edits are excluded. */
+export function reviewPeers(packet: ReviewPacket, component: Component): Component[] {
+  if (!component.reviewGroup || !componentPresentation(component).code) return [component];
+  return packet.components.filter(c => c.reviewGroup === component.reviewGroup && componentPresentation(c).code);
+}
+export function decisionTargets(packet: ReviewPacket, draft: Draft, selected: Component, grouped: boolean, editing: string[] = []) {
+  return (grouped ? reviewPeers(packet, selected) : [selected]).filter(c => c.id === selected.id ||
+    (componentState(c, draft).kind === 'pending' && !editing.includes(c.id)));
 }

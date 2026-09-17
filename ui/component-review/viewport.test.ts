@@ -21,3 +21,8 @@ test('hover panning reaches both edges, synchronizes midpoint, and ignores fitte
   expect(hoverPan(110,10,200,150)).toBe(0);
   expect(hoverPan(110,10,0,600)).toBe(0);
 });
+
+ test('fit never magnifies tiny crops; deliberate zoom still does', () => {
+  expect(comparisonSize(66,24,600,420,'fit')).toEqual({scale:1,width:66,height:24});
+  expect(comparisonSize(66,24,600,420,2)).toEqual({scale:2,width:132,height:48});
+});

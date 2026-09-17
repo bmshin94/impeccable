@@ -147,6 +147,20 @@ pub fn freeze(project: &Path, input: &Value) -> Result<(Value, BTreeMap<String, 
             }
         }
     }
+    let mut groups: BTreeMap<String, String> = BTreeMap::new();
+    for c in input["components"].as_array().ok_or("components must be an array")? {
+        if let Some(group) = c.get("reviewGroup") {
+            let name = group.as_str().filter(|s| !s.trim().is_empty() && s.len() <= 120)
+                .ok_or("reviewGroup needs a nonempty name of at most 120 bytes")?;
+            if input["stage"] != "components" || c["preview"]["kind"] != "page" {
+                return Err("review groups are for repeated code components; raster assets remain individual".into());
+            }
+            let path = string(&c["preview"], "path")?;
+            if groups.insert(name.into(), path.into()).is_some_and(|previous| previous != path) {
+                return Err("a review group must share one code document".into());
+            }
+        }
+    }
     let mut ids = BTreeSet::new();
     let components = packet["components"]
         .as_array_mut()

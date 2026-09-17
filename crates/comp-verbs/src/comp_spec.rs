@@ -339,6 +339,29 @@ pub fn snap_box_to_ink(comp: &Image, boxf: (f64, f64, f64, f64), ground: f64) ->
     ))
 }
 
+/// Automatic narrowing must not discard separate words/lines from a compound
+/// control. The original largest-cluster helper remains available to explicit
+/// callers; region measurement uses this conservative wrapper.
+fn snap_preserving_ink(comp: &Image, boxf: (f64, f64, f64, f64), ground: f64) -> Option<(f64, f64, f64, f64)> {
+    let snapped = snap_box_to_ink(comp, boxf, ground)?;
+    let original = r::clamp_rect(comp, boxf.0 * comp.width as f64, boxf.1 * comp.height as f64,
+        boxf.2 * comp.width as f64, boxf.3 * comp.height as f64);
+    let keep = r::clamp_rect(comp, snapped.0 * comp.width as f64, snapped.1 * comp.height as f64,
+        snapped.2 * comp.width as f64, snapped.3 * comp.height as f64);
+    let (mut total, mut lost) = (0u64, 0u64);
+    for y in original.y..original.y + original.h {
+        for x in original.x..original.x + original.w {
+            if (gray_no_alpha(&comp.data, (y * comp.width + x) * 4) - ground).abs() > 60. {
+                total += 1;
+                if x < keep.x || x >= keep.x + keep.w || y < keep.y || y >= keep.y + keep.h { lost += 1; }
+            }
+        }
+    }
+    // At most incidental noise may disappear. Preserve the supplied span when
+    // the algorithm cannot distinguish a second label from unrelated content.
+    (lost * 100 <= total * 5).then_some(snapped)
+}
+
 /// JS: uncoveredInkCells(comp, regions).
 fn uncovered_ink_cells(comp: &Image, regions: &[Value]) -> Vec<String> {
     let grid = m::detail_grid(comp, 10, 10, 512);
@@ -453,7 +476,7 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
         let grid_str = raw.get("grid").and_then(Value::as_str);
         let snap_not_false = raw.get("snap").and_then(Value::as_bool) != Some(false);
         if !has_box && grid_str.is_some() && (kind == "text" || kind == "control") && snap_not_false {
-            if let Some(snapped) = snap_box_to_ink(comp, boxf, page_ground) {
+            if let Some(snapped) = snap_preserving_ink(comp, boxf, page_ground) {
                 cover_box = Some(boxf);
                 boxf = snapped;
             }
@@ -1038,6 +1061,18 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
 #[cfg(test)]
 mod reference_tests {
     use super::*;
+
+    #[test]
+    fn automatic_snap_preserves_separated_navigation_and_multiline_copy() {
+        let mut comp = r::create_image(300, 100, [255,255,255,255]);
+        r::fill_rect(&mut comp, 25., 30., 70., 12., [0.,0.,0.,255.]);
+        r::fill_rect(&mut comp, 185., 30., 45., 12., [0.,0.,0.,255.]);
+        assert!(snap_box_to_ink(&comp, (0.,0.,1.,1.), 255.).is_some());
+        assert!(snap_preserving_ink(&comp, (0.,0.,1.,1.), 255.).is_none());
+        let mut single = r::create_image(300, 100, [255,255,255,255]);
+        r::fill_rect(&mut single, 25., 30., 70., 12., [0.,0.,0.,255.]);
+        assert!(snap_preserving_ink(&single, (0.,0.,1.,1.), 255.).is_some());
+    }
 
     fn fixture() -> (Image, Value) {
         let mut comp = r::create_image(16, 16, [230, 220, 210, 255]);
