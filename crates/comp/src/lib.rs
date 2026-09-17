@@ -20,6 +20,7 @@ pub mod jsnum;
 pub mod metrics;
 pub mod png_io;
 pub mod raster;
+pub mod source_pixels;
 
 /// CRC-32 (IEEE, the same polynomial the JS png encoder uses) over a byte
 /// slice. Exposed so parity tests can checksum decoded pixel buffers.

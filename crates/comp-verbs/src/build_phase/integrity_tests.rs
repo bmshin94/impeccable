@@ -732,3 +732,25 @@ fn caller_supplied_fake_metadata_cannot_bypass_the_crop_check() {
     assert!(!gate.ok);
     assert!(gate.reasons.iter().any(|reason| reason.contains("is the comp crop")), "{:?}", gate.reasons);
 }
+
+#[test]
+fn stripped_blurred_shifted_comp_pixels_cannot_pass_with_a_generation_prompt() {
+    let ws=Workspace::new();
+    ws.write("comp.png", include_bytes!("../../../comp/tests/fixtures/comp-copy/reference.png"));
+    let changed=png_io::decode_png(include_bytes!("../../../comp/tests/fixtures/comp-copy/transformed.png")).unwrap().image;
+    ws.write("plate.png", &png_io::encode_png(&changed,&[("impeccable:prompt".into(),"High resolution photography".into())]).unwrap());
+    ws.write(SPEC_PATH,util::json_pretty(&json!({"comp":"comp.png","regions":[
+        {"id":"photo","kind":"plate","medium":"raster","plate":"plate.png","px":{"x":0,"y":0,"w":128,"h":96}}
+    ]})).as_bytes());
+    let gate=gate_plates(&ws.io());
+    assert!(!gate.ok);
+    assert!(gate.reasons.iter().any(|r|r.contains("registered RGB pixels match")),"{:?}",gate.reasons);
+    assert_eq!(gate.plates.unwrap()[0]["status"],"invalid");
+    // Texture patches are explicitly allowed by new-work.md. Fidelity checks
+    // still apply, but this source-pixel prohibition must not apply to them.
+    ws.write(SPEC_PATH,util::json_pretty(&json!({"comp":"comp.png","regions":[
+        {"id":"material","kind":"texture","medium":"raster","plate":"plate.png","px":{"x":0,"y":0,"w":128,"h":96}}
+    ]})).as_bytes());
+    let texture_gate = gate_plates(&ws.io());
+    assert!(!texture_gate.reasons.iter().any(|r|r.contains("is the comp crop")),"{:?}",texture_gate.reasons);
+}

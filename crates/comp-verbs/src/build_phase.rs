@@ -565,7 +565,13 @@ fn gate_plates(io: &Io) -> Gate {
                     rr.pointer("/px/h").and_then(Value::as_f64).unwrap_or(0.0),
                 );
                 let same = impeccable_comp::metrics::structure_score(&raw, &r::resize(&img.image, raw.width as f64, raw.height as f64), 256);
-                if same >= 0.95 {
+                let copied_pixels = impeccable_comp::source_pixels::is_transformed_copy(&raw, &img.image)
+                    || impeccable_comp::source_pixels::is_transformed_copy(refimg, &img.image);
+                if copied_pixels {
+                    reasons.push(format!(
+                        "plate {file} is the comp crop of region {id} (registered RGB pixels match after resampling and a small translation): a crop of the comp is never a plate; regenerate the plate using the crop only as a reference"
+                    ));
+                } else if same >= 0.95 {
                     reasons.push(format!(
                         "plate {file} is the comp crop of region {id} (structure {}% against the raw region, a resample of the same pixels): a crop of the comp is never a plate; generate the plate from the crop as reference ({s} generate-image --ref <crop.png> --prompt-file <prompt.txt> --out <plate.png> for {id})",
                         to_fixed(same * 100.0, 0)
