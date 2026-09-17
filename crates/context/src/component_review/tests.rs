@@ -599,6 +599,24 @@ fn visual_approvals_survive_shared_source_edits_but_not_changed_scope_or_pixels(
         before["packet"]["revision"].as_str().unwrap()
     )))
     .unwrap();
+    // Component decisions approve the isolated preview, not its contextual
+    // surroundings or the dependency closure of a shared document.
+    let mut component_previous = previous.clone();
+    component_previous["packet"]["stage"] = json!("components");
+    let mut component_current = after.clone();
+    component_current["packet"]["stage"] = json!("components");
+    component_current["packet"]["components"][1]["dependencies"] = json!(["shared.css", "unrelated.png"]);
+    component_current["packet"]["components"][1]["context"] = json!({"kind":"image","url":"/files/unrelated-context.png"});
+    component_current["capture"]["components"][1]["views"]["preview"]["rasterElements"] = json!(12);
+    assert_eq!(super::visual_approval::carry(&component_previous, &mut component_current, &dir.join("blobs")), 1);
+    assert_eq!(component_current["draft"]["decisions"]["control"]["action"], "approve");
+    assert!(component_current["receipt"].is_null());
+    for field in ["box", "medium", "note", "preview"] {
+        let mut changed = component_current.clone();
+        changed["draft"]["decisions"].as_object_mut().unwrap().remove("control");
+        changed["packet"]["components"][1][field] = json!("changed");
+        assert_eq!(super::visual_approval::carry(&component_previous, &mut changed, &dir.join("blobs")), 0, "component scope: {field}");
+    }
     for field in ["box", "medium", "note", "context"] {
         let mut changed = after.clone();
         changed["packet"]["components"][1][field] = json!("changed");

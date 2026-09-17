@@ -14,9 +14,20 @@ fn identity(state: &Value, component: &Value, blobs: &Path) -> Option<Value> {
     let prefix = format!("/files/{}/", state["packet"]["revision"].as_str()?);
     let mut definition = component.clone();
     definition.as_object_mut()?.remove("revision");
-    // Dependency paths remain part of scope; their bytes are checked by sources_current.
+    let component_stage = state["packet"]["stage"] == "components";
+    if component_stage {
+        // The checkpoint approves the isolated component. Context is explicitly
+        // reference-only; shared document dependencies and thumbnails are not
+        // additional things the user approves. Source integrity still binds the
+        // full frozen closure and is checked separately by sources_current.
+        for key in ["dependencies", "context", "thumbnail"] {
+            definition.as_object_mut()?.remove(key);
+        }
+    }
     let mut views = serde_json::Map::new();
-    for key in ["preview", "context", "thumbnail", "comp"] {
+    let keys: &[&str] = if component_stage { &["preview", "comp"] }
+        else { &["preview", "context", "thumbnail", "comp"] };
+    for &key in keys {
         let view = if key == "comp" {
             &state["packet"]["comp"]
         } else {
@@ -60,6 +71,9 @@ fn identity(state: &Value, component: &Value, blobs: &Path) -> Option<Value> {
                 "rasterElements",
                 "semanticControls",
             ] {
+                // These counts describe the entire shared document, including
+                // components outside this decision's isolated preview.
+                if component_stage && matches!(field, "svgElements" | "rasterElements" | "semanticControls") { continue; }
                 scoped[field] = proof[field].clone();
             }
         }
