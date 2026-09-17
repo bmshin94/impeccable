@@ -31,6 +31,8 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
   const shortcutLabel = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘Enter' : 'Ctrl+Enter';
   let overlay = false;
   let expandedComparison = false;
+  let closingComparison = false;
+  let collapseComparison: ((done: () => void) => void) | null = null;
   let showAll = false;
   let trayOpen = true;
   let restoreTrayAfterFeedback = false;
@@ -57,8 +59,12 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
     if (next) selected = next;
     mobilePane='component'; previousRound=false; overlay=false; zoom='fit'; outputMode='isolated';
     inventoryFilter = finished ? 'reviewed' : 'pending';
-    render();
-    focusReview(finished ? 'review-summary' : edits[selected!] ? 'feedback' : 'approve');
+    const showNext = () => {
+      render();
+      focusReview(finished ? 'review-summary' : edits[selected!] ? 'feedback' : 'approve');
+    };
+    if (finished && expandedComparison && collapseComparison) collapseComparison(showNext);
+    else showNext();
   }
   async function sendReview() {
     if (sending || submitted || previousRound || Object.keys(edits).length) return;
@@ -70,7 +76,7 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
     finally { sending=false; render(); }
   }
   function updateDecision(action: 'approve' | 'revise') {
-    if (sending || submitted || previousRound) return;
+    if (sending || submitted || previousRound || closingComparison) return;
     const c = packet.components.find(c => c.id === selected);
     if (!c) return;
     const saved = draft.decisions[c.id];
@@ -88,7 +94,7 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
     } else advance(c.id);
   }
   function beginFeedback() {
-    if (sending || submitted || previousRound) return;
+    if (sending || submitted || previousRound || closingComparison) return;
     const c = packet.components.find(c=>c.id===selected);
     if (!c) return;
     const saved = draft.decisions[c.id];
@@ -109,6 +115,7 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
   }
   function render() {
     resize?.disconnect();
+    if (submitted || (finished && !assembled)) expandedComparison = false;
     const active = root.activeElement as HTMLElement | null;
     const focusId = active?.id;
     const focusSelection = active?.dataset.select;
@@ -213,9 +220,15 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
     const comparisonDialog=root.querySelector<HTMLDialogElement>('#comparison-dialog')!;
     const comparisonPanel=root.querySelector<HTMLElement>('.comparison-panel');
     const comparisonSlot=root.querySelector<HTMLElement>('.comparison-slot');
+    const reviewForm=root.querySelector<HTMLElement>('.inspector > .review-form');
+    const inspector=root.querySelector<HTMLElement>('.inspector')!;
+    const expandContents=()=>{
+      comparisonDialog.append(comparisonPanel!);
+      if(reviewForm)comparisonDialog.append(reviewForm);
+    };
     if(expandedComparison && comparisonPanel && comparisonSlot){
       comparisonSlot.style.height=`${oldComparisonHeight}px`;
-      comparisonDialog.append(comparisonPanel);comparisonDialog.showModal();
+      expandContents();comparisonDialog.showModal();
     }
     if(viewingPrevious)root.querySelectorAll<HTMLButtonElement|HTMLInputElement|HTMLTextAreaElement>('.decisions button,#feedback,#split,#save-feedback,#cancel-feedback,#undo-decision,#approve-rest,#submit,#inventory-confirm').forEach(el=>el.disabled=true);
     root.querySelector('.inspection-content')!.scrollTop=inspectorTop;
@@ -322,7 +335,7 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
       const panes=Array.from(root.querySelectorAll<HTMLElement>('.pan-viewport'));
       if(content?.clientHeight){
         const height=expandedComparison
-          ? Math.max(100,comparisonDialog.clientHeight-(comparisonPanel?.querySelector('.compare-toolbar')?.clientHeight??0)-(comparisonPanel?.querySelector('.expanded-title')?.clientHeight??0)-(comparisonPanel?.querySelector('.view-controls')?.clientHeight??0)-112)
+          ? Math.max(100,comparisonDialog.clientHeight-(comparisonPanel?.querySelector('.compare-toolbar')?.clientHeight??0)-(comparisonPanel?.querySelector('.expanded-title')?.clientHeight??0)-(comparisonPanel?.querySelector('.view-controls')?.clientHeight??0)-(reviewForm?.getBoundingClientRect().height??0)-124)
           : Math.min(assembled?Number.POSITIVE_INFINITY:248,Math.max(100,content.clientHeight
             - ((panes[0]?.getBoundingClientRect().top ?? content.getBoundingClientRect().top)-content.getBoundingClientRect().top+content.scrollTop)
             - (comparisonPanel?.querySelector('.view-controls')?.clientHeight ?? 0)-12));
@@ -335,7 +348,7 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
       const path=root.querySelector<SVGPathElement>('.connector path');
       if(region&&end&&path){const a=region.getBoundingClientRect(),b=end.getBoundingClientRect();const x1=a.right-bounds.left,y1=a.top+a.height/2-bounds.top,x2=b.left-bounds.left-8,y2=b.top+b.height/2-bounds.top;path.setAttribute('d',`M ${x1} ${y1} H ${x2-14} V ${y2} H ${x2}`);}
     }
-    function setComparisonExpanded(open: boolean) {
+    function setComparisonExpanded(open: boolean, afterClose?: () => void) {
       if(!comparisonPanel||!comparisonSlot||open===expandedComparison)return;
       const button=root.querySelector<HTMLButtonElement>('#expand-comparison')!;
       const before=(expandedComparison?comparisonDialog:comparisonPanel).getBoundingClientRect();
@@ -345,12 +358,15 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
       const py=currentPane ? currentPane.scrollTop/Math.max(1,currentPane.scrollHeight-currentPane.clientHeight) : 0;
       const restorePan=()=>comparisonPanel.querySelectorAll<HTMLElement>('.pan-viewport').forEach(p=>{p.scrollLeft=px*Math.max(0,p.scrollWidth-p.clientWidth);p.scrollTop=py*Math.max(0,p.scrollHeight-p.clientHeight);});
       const restore=()=>{
-        comparisonSlot.append(comparisonPanel);comparisonDialog.close();comparisonSlot.style.height='';
+        comparisonSlot.append(comparisonPanel);
+        if(reviewForm){inspector.append(reviewForm);reviewForm.inert=false;}
+        comparisonDialog.close();comparisonSlot.style.height='';closingComparison=false;
         expandedComparison=false;button.innerHTML=icon('expand');button.setAttribute('aria-label','Enlarge comparison');button.title='Enlarge comparison';button.setAttribute('aria-expanded','false');
         resizePreview();restorePan();button.focus({preventScroll:true});
+        afterClose?.();
       };
       if(open){
-        comparisonSlot.style.height=`${before.height}px`;comparisonDialog.append(comparisonPanel);comparisonDialog.showModal();expandedComparison=true;
+        comparisonSlot.style.height=`${before.height}px`;expandContents();comparisonDialog.showModal();expandedComparison=true;
         button.innerHTML=icon('compact');button.setAttribute('aria-label','Restore comparison');button.title='Restore comparison (Esc)';button.setAttribute('aria-expanded','true');
         resizePreview();restorePan();button.focus({preventScroll:true});
         const after=comparisonDialog.getBoundingClientRect();
@@ -359,15 +375,16 @@ export function mountComponentReview(host: HTMLElement, packet: ReviewPacket, op
         if(button.disabled)return;
         const target=comparisonSlot.getBoundingClientRect();
         if(reduced){restore();return;}
-        button.disabled=true;
+        button.disabled=true;closingComparison=true;if(reviewForm)reviewForm.inert=true;
         const animation=comparisonDialog.animate([{transform:'none',opacity:1},{transform:`translate(${target.x-before.x}px,${target.y-before.y}px) scale(${target.width/before.width},${target.height/before.height})`,opacity:.6}],{duration:200,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'});
         animation.finished.then(()=>{if(comparisonDialog.isConnected){animation.cancel();button.disabled=false;restore();}}).catch(()=>{});
       }
     }
+    collapseComparison=done=>setComparisonExpanded(false,done);
     on('expand-comparison',()=>setComparisonExpanded(!expandedComparison));
     comparisonDialog.addEventListener('cancel',e=>{e.preventDefault();e.stopPropagation();setComparisonExpanded(false);});
     comparisonDialog.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setComparisonExpanded(false);}});
-    resize=new ResizeObserver(()=>{resizePreview();updateScrollEdges();});resize.observe(workbench);resize.observe(comparisonDialog);const content=root.querySelector('.inspection-content');if(content)resize.observe(content);const feedback=root.querySelector('.repair-context');if(feedback)resize.observe(feedback);const toolbar=comparisonPanel?.querySelector('.compare-toolbar');if(toolbar)resize.observe(toolbar);resizePreview();
+    resize=new ResizeObserver(()=>{resizePreview();updateScrollEdges();});resize.observe(workbench);resize.observe(comparisonDialog);if(reviewForm)resize.observe(reviewForm);const content=root.querySelector('.inspection-content');if(content)resize.observe(content);const feedback=root.querySelector('.repair-context');if(feedback)resize.observe(feedback);const toolbar=comparisonPanel?.querySelector('.compare-toolbar');if(toolbar)resize.observe(toolbar);resizePreview();
     const panes=Array.from(root.querySelectorAll<HTMLElement>('.pan-viewport'));
     panes.forEach(pane=>{pane.scrollLeft=panLeft;pane.scrollTop=panTop;});
     panes.forEach(pane=>{

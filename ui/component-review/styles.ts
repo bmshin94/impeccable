@@ -48,8 +48,11 @@ export const styles = `
 
 .comparison-panel{min-width:0;container-type:inline-size}.comparison-panel .expanded-title{display:none}.comparison-panel .compare-toolbar{justify-content:flex-start}.comparison-panel .overlay-control{margin-left:0}.comparison-panel #expand-comparison{flex-shrink:0}.pan-viewport.pannable{cursor:move}.pan-viewport img{user-select:none;-webkit-user-drag:none}
 #comparison-dialog{position:fixed;inset:16px;width:calc(100vw - 32px);height:calc(100dvh - 32px);max-width:none;max-height:none;margin:0;padding:24px;background:var(--paper);color:inherit;border:1px solid var(--line);border-radius:8px;box-shadow:0 20px 60px #14292340;overflow:hidden;transform-origin:top left}
+#comparison-dialog[open]{display:flex;flex-direction:column;gap:12px}
+#comparison-dialog>.review-form{width:100%;max-width:900px;align-self:center;max-height:55%;padding:12px 4px 0}
+#comparison-dialog>.review-form .decision-title{display:none}
 #comparison-dialog::backdrop{background:#172821a6}
-#comparison-dialog .comparison-panel{height:100%;display:flex;flex-direction:column;gap:12px}
+#comparison-dialog .comparison-panel{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px}
 #comparison-dialog .expanded-title{display:block;font-size:20px;line-height:1.3;margin:0;font-weight:500}
 #comparison-dialog .compare-toolbar{flex-shrink:0;margin:0}
 #comparison-dialog .compare{flex:1;min-height:0;max-width:none;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
