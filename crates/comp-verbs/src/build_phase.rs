@@ -925,7 +925,7 @@ fn write_scaffold(io: &Io, spec: &Value) -> Scaffold {
             let text = rr.get("text").and_then(Value::as_str).map(escape_lt).filter(|t| !t.is_empty()).unwrap_or_else(|| id.clone());
             body_parts.push(format!("  <div class=\"r-{id} region text\" data-region=\"{id}\"><!-- {label} --><p style=\"{style}\">{text}</p></div>"));
         } else if kind == "control" {
-            body_parts.push(format!("  <div class=\"r-{id} region control\" data-region=\"{id}\"><!-- {label}: rebuild the control's chrome from the crop (comp-spec.mjs --crop {id}); its ink box, border, fill, radius, and label size are the comp's --></div>"));
+            body_parts.push(format!("  <div class=\"r-{id} region control\" data-region=\"{id}\"><!-- {label}: match the control's lettering and visible shape to the crop (comp-spec.mjs --crop {id}); a control need not have button chrome --></div>"));
         } else {
             body_parts.push(format!("  <div class=\"r-{id} region chrome\" data-region=\"{id}\"><!-- {label} --></div>"));
         }
@@ -1035,14 +1035,21 @@ fn hero_readings(io: &Io, state: &Value, spec: Option<&Value>, build_path: &str)
         let b = r::crop(&aligned, pxf("x"), pxf("y"), pxf("w"), pxf("h"));
         let kind = rr.get("kind").and_then(Value::as_str).unwrap_or("");
         let region = region_struct(&rr);
-        if kind == "text" {
+        // A control's functional role does not make its lettering chrome.
+        // Measure recognizable text as well as the control's geometry; keep
+        // its kind and structural verdict unchanged. Icon-only controls must
+        // not receive the text check's colour-only fallback advice.
+        if kind == "text" || kind == "control" {
             let t = text_region_check(&region, &a, &b);
-            for f in t.get("findings").and_then(Value::as_array).cloned().unwrap_or_default() {
-                if let Some(s) = f.as_str() {
-                    text.push(s.to_string());
+            if kind == "text" || t.get("metrics").is_some_and(Value::is_object) {
+                for f in t.get("findings").and_then(Value::as_array).cloned().unwrap_or_default() {
+                    if let Some(s) = f.as_str() {
+                        text.push(s.to_string());
+                    }
                 }
             }
-        } else if kind == "chrome" || kind == "control" {
+        }
+        if kind == "chrome" || kind == "control" {
             let cc = chrome_strip_check(&region, &a, &b);
             for f in cc.get("findings").and_then(Value::as_array).cloned().unwrap_or_default() {
                 if let Some(s) = f.as_str() {
@@ -1746,7 +1753,7 @@ fn gate_hero_inner(io: &Io, state: &mut Value, build_path: &str, min: f64, out_d
         let tail = if kind == "text" {
             "the composition of this text region differs from the comp; re-derive it from the spec box".to_string()
         } else if kind == "control" {
-            "this control does not read as the comp's: rebuild its chrome from the crop (border, fill, radius, chevron or arrow, label size) rather than from a component default".to_string()
+            "this control differs from the comp: inspect its lettering and visible shape separately against the crop and the measured readings; preserve the region's control classification".to_string()
         } else {
             format!("the plate here does not read as the comp region; regenerate it with the crop as reference ({s} generate-image --ref <crop.png> --prompt-file <prompt.txt> --out <plate.png> for {id}) and place it at its box")
         };
@@ -1761,7 +1768,7 @@ fn gate_hero_inner(io: &Io, state: &mut Value, build_path: &str, min: f64, out_d
         }
         let id = r.get("id").and_then(Value::as_str).unwrap_or("");
         push_region_blocker(&mut reasons, &mut region_reasons, id, format!(
-            "control {id} drifts to {}% (structure {}%, color {}%): its chrome differs from the comp's; open {} and match the border, fill, radius, chevron or arrow, and label size",
+            "control {id} drifts to {}% (structure {}%, color {}%): open {} and compare its lettering and visible shape separately; use the measured readings and preserve the region's control classification",
             pct0(rscore(r, "overall")), pct0(rscore(r, "structure")), pct0(rscore(r, "color")),
             format!("{out_dir}/regions/{id}.png")
         ));
@@ -2397,6 +2404,47 @@ fn next_instruction(io: &Io, state: &Value) -> String {
 #[cfg(test)]
 mod transparency_guidance_tests {
     use super::*;
+
+    #[test]
+    fn control_lettering_gets_the_same_measurements_as_text_without_reclassification() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../comp/tests/fixtures");
+        let (io, _) = Io::captured("", root, Default::default());
+        let comp = load_raster(&io, "hero_comp_crop.png").unwrap();
+        let mut spec = json!({"regions":[{"id":"cta","kind":"text","px":{
+            "x":0,"y":0,"w":comp.width,"h":comp.height
+        }}]});
+        let state = json!({"comp":"hero_comp_crop.png"});
+        let text = hero_readings(&io, &state, Some(&spec), "hero_build_crop.png").unwrap();
+        assert!(!text.text.is_empty(), "fixture must expose a lettering mismatch");
+        spec["regions"][0]["kind"] = json!("control");
+        let control = hero_readings(&io, &state, Some(&spec), "hero_build_crop.png").unwrap();
+        assert_eq!(control.text, text.text);
+        for (message, ids) in text.region_ids {
+            assert_eq!(control.region_ids.get(&message), Some(&ids));
+        }
+        assert!(!control.chrome.is_empty(), "control geometry must still be checked");
+        assert_eq!(spec["regions"][0]["kind"], "control");
+    }
+
+    #[test]
+    fn non_text_control_keeps_geometry_checks_without_lettering_advice() {
+        let dir = std::env::temp_dir().join(format!("control-readings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, y) in [("comp.png", 35.0), ("build.png", 65.0)] {
+            let mut image = r::create_image(400, 100, [255, 255, 255, 255]);
+            r::fill_rect(&mut image, 20.0, y, 360.0, 4.0, [0.0, 0.0, 0.0, 255.0]);
+            std::fs::write(dir.join(name), png_io::encode_png(&image, &[]).unwrap()).unwrap();
+        }
+        let (io, _) = Io::captured("", dir.clone(), Default::default());
+        let state = json!({"comp":"comp.png"});
+        let spec = json!({"regions":[{"id":"slider","kind":"control","px":{
+            "x":0,"y":0,"w":400,"h":100
+        }}]});
+        let readings = hero_readings(&io, &state, Some(&spec), "build.png").unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(readings.text.is_empty());
+        assert!(!readings.chrome.is_empty(), "displaced rule must remain visible to the gate");
+    }
 
     #[test]
     fn native_frame_support_rejects_displacement_and_token_images() {
