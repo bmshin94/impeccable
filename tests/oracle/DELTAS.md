@@ -176,3 +176,7 @@ stderr are unchanged. The golden was updated to enforce these exact results;
 this is not an open-ended accepted delta. Frozen function call vectors remain
 unchanged. The Rust narrow-region regression independently checks that changing
 only neighbouring pixels leaves the measured crop identical.
+
+## Recorded 2026-09-17: reference-bound typography reuse
+
+- `comp-spec-regions`: the written spec adds `compSha256`, a SHA-256 of decoded dimensions and pixels. This binds retained typography to the exact reference when regions are remeasured. Structured comparison verified that only this field changed; stdout, stderr, exit status, regions, palettes and bounds are identical. The failing/passing regression separately verifies preservation and invalidation.

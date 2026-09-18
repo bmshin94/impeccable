@@ -677,3 +677,17 @@ fn review_groups_preserve_instances_and_require_a_shared_code_document() {
     input["components"][2]["preview"]["path"]=json!("different.html");
     assert!(manifest::freeze(&f.project,&input).unwrap_err().contains("share one code document"));
 }
+
+#[test]
+fn invalid_component_geometry_names_the_component_and_bounds() {
+    let f = Fixture::new();
+    let mut input = f.manifest();
+    input["components"][0]["box"]["w"] = json!(2);
+    let error = manifest::freeze(&f.project, &input).unwrap_err();
+    assert!(error.contains("art") && error.contains("box") && error.contains("2") && error.contains("normalized"), "{error}");
+    let mut input = f.manifest();
+    let duplicate = input["components"][0].clone();
+    input["components"].as_array_mut().unwrap().push(duplicate);
+    let error = manifest::freeze(&f.project, &input).unwrap_err();
+    assert!(error.contains("duplicate component id") && error.contains("art"), "{error}");
+}

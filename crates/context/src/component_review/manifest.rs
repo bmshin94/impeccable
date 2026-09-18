@@ -182,8 +182,11 @@ pub fn freeze(project: &Path, input: &Value) -> Result<(Value, BTreeMap<String, 
             }
         }
         let id = string(c, "id")?.to_string();
-        if !ids.insert(id) || !valid_box(&c["box"]) {
-            return Err("duplicate component or invalid box".into());
+        if !ids.insert(id.clone()) {
+            return Err(format!("duplicate component id {id:?}; each component needs a unique id"));
+        }
+        if !valid_box(&c["box"]) {
+            return Err(format!("component {id:?} has invalid box {}. Expected normalized {{x,y,w,h}}: x/y >= 0, w/h > 0, x+w and y+h <= 1 (tolerance 0.00001).", c["box"]));
         }
         for k in ["name", "medium", "note"] {
             if !c[k].is_string() {

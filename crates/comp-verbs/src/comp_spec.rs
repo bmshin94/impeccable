@@ -12,6 +12,7 @@ use impeccable_comp::raster::{self as r, Image};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::util::{self, arg, arg_or, flag, num, r4, r4f, round};
 
@@ -1040,7 +1041,7 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         io.err("comp-spec: pass --grid to get the coordinate grid, then --regions <json> (or --auto for band regions)\n");
         return 1;
     };
-    let spec = match measure_regions(&comp, &regions_input, comp_path) {
+    let mut spec = match measure_regions(&comp, &regions_input, comp_path) {
         Ok(s) => s,
         Err(e) => {
             io.err(&format!("comp-spec: {e}\n"));
@@ -1048,6 +1049,17 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         }
     };
     let spec_out = resolve(io, &spec_path);
+    // Bind cached font evidence to the decoded reference, including dimensions.
+    // Legacy specs without this identity are deliberately remeasured once.
+    let mut hasher = Sha256::new();
+    hasher.update(comp.width.to_le_bytes());
+    hasher.update(comp.height.to_le_bytes());
+    hasher.update(&comp.data);
+    spec["compSha256"] = json!(format!("{:x}", hasher.finalize()));
+    if let Some(previous) = std::fs::read(&spec_out).ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) {
+        preserve_typography(&mut spec, &previous);
+    }
     if let Some(parent) = spec_out.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1056,6 +1068,25 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
     io.out(&format!("{}\n", print_spec(&spec)));
     let _ = r4f(0.0); // silence unused if optimized away
     0
+}
+
+/// Remeasuring an unrelated region must not erase measured font work. Reuse
+/// only the existing spec's evidence, never a `type` claim in the input file.
+fn preserve_typography(spec: &mut Value, previous: &Value) {
+    if !spec["compSha256"].is_string() || spec["compSha256"] != previous["compSha256"] {
+        return;
+    }
+    let Some(old_regions) = previous["regions"].as_array() else { return; };
+    let Some(regions) = spec["regions"].as_array_mut() else { return; };
+    for region in regions {
+        if !matches!(region["kind"].as_str(), Some("text" | "control")) { continue; }
+        let Some(old) = old_regions.iter().find(|old| old["id"] == region["id"]) else { continue; };
+        if ["kind", "medium", "box", "px", "text"].iter().all(|key| old[*key] == region[*key]) {
+            if let Some(ty) = old.get("type").filter(|ty| ty.is_object()) {
+                region["type"] = ty.clone();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
