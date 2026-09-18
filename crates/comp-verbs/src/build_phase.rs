@@ -19,7 +19,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 
 use crate::comp_diff::{align_build, best_shift, build_report, compare, write_artifacts, write_region_artifacts, CompareResult, Score};
-use crate::comp_spec::{load_spec, prepare_plate_reference, BUILD_DIR, SPEC_PATH};
+use crate::comp_spec::{load_spec, prepare_plate_reference, PlateReference, BUILD_DIR, SPEC_PATH};
 use crate::font_match::choice_stamped;
 use crate::entry_capture::{CapturedEntry, EntryRenderer, EntryRequest, EntryStage};
 use crate::util::{self, arg, flag, round, to_fixed};
@@ -469,13 +469,36 @@ fn plate_verdict(region: &Value, score: &Score) -> (bool, Vec<String>) {
     (reasons.is_empty(), reasons)
 }
 
+fn score_plate_reference(reference: &PlateReference, build: &Image, kind: Option<&str>) -> Score {
+    let mut aligned = align_build(&reference.image, build, "cover");
+    // These pixels belong to foreground UI, not the underlying artwork. Use
+    // the same exclusion on both sides, in reference coordinates AFTER cover
+    // alignment. Provenance checks below still inspect the unmasked asset.
+    for exclusion in &reference.excluded_regions {
+        let p = &exclusion["cropPx"];
+        let rect = r::clamp_rect(&aligned, p["x"].as_f64().unwrap_or(0.), p["y"].as_f64().unwrap_or(0.),
+            p["w"].as_f64().unwrap_or(0.), p["h"].as_f64().unwrap_or(0.));
+        for y in rect.y..rect.y + rect.h {
+            let start = (y * aligned.width + rect.x) * 4;
+            let end = start + rect.w * 4;
+            aligned.data[start..end].copy_from_slice(&reference.image.data[start..end]);
+        }
+    }
+    crate::comp_diff::score_pair(&reference.image, &aligned, kind)
+}
+
 fn gate_plates(io: &Io) -> Gate {
-    let s = self_cmd(io);
     let Some(spec) = load_spec(&abs(io, SPEC_PATH)) else {
         return Gate::fail(vec!["no spec".into()]);
     };
+    gate_plates_for(io, &spec, None)
+}
+
+fn gate_plates_for(io: &Io, spec: &Value, only_id: Option<&str>) -> Gate {
+    let s = self_cmd(io);
     let regions = spec_regions(&spec);
-    let raster_regions: Vec<Value> = regions.iter().filter(|r| r.get("medium").and_then(Value::as_str) == Some("raster")).cloned().collect();
+    let raster_regions: Vec<Value> = regions.iter().filter(|r| r.get("medium").and_then(Value::as_str) == Some("raster")
+        && only_id.is_none_or(|id| r["id"] == id)).cloned().collect();
     if raster_regions.is_empty() {
         let mut g = Gate::ok("no plates owed".into());
         g.plates = Some(vec![]);
@@ -549,7 +572,7 @@ fn gate_plates(io: &Io) -> Gate {
             if let Some(issue) = reference.issue(&id) {
                 reasons.push(format!("plate {file}: {issue}"));
             } else {
-                let score = compare(refimg, &build, None, "cover", "", kind).whole;
+                let score = score_plate_reference(&reference, &build, kind);
                 score_val = Some(score.overall);
                 let (_, vreasons) = plate_verdict(rr, &score);
                 for reason in vreasons {
@@ -2388,7 +2411,7 @@ fn next_instruction(io: &Io, state: &Value) -> String {
             "Measure the comp: {s} comp-spec --comp {comp} --grid, open {}, write regions.json (every illustration, photo, texture as its own plate region; every text block its own text region), run {s} comp-spec --comp {comp} --regions regions.json. Then measure the type: {s} font-match --measure <id> for each text region (cap height, width class, weight class) and {s} font-match --rank <lead text region> --text \"<its first words>\" to choose the headline face by metrics (the USE line is the CSS; with no browser it records the catalog's nearest face, which is the choice; do not install one, and do not write a chosen face into the spec by hand). Then {s} build-phase advance.",
             format!("{BUILD_DIR}/comp-grid.png")
         ),
-        "plates" => format!("Produce every plate in the spec ({s} comp-spec --print lists them). For each illustration, photo, or figure, run {s} comp-spec --crop <id> --out <crop.png> and save {s} comp-spec --plate-prompt <id> to a prompt file. For an isolated figure or object on the page ground, add --background transparent to that plate-prompt command. Prefer the harness image tool with the crop as reference and that prompt; request native transparent PNG for cutouts. With the API fallback, run {s} generate-image --ref <crop.png> --prompt-file <prompt.txt> --out <plate.png> --size <WxH> --quality high; add --background transparent for cutouts. Create the output directory first and choose a supported size matching the region's aspect at least 1.5x its pixel size. generate-image embeds the prompt; after a harness generation run {s} embed-prompt <plate.png> --prompt-file <prompt.txt>. Preserve white paint, fine edges, and interior holes; verify alpha and inspect the cutout on light and dark grounds. Do not chroma-key native transparent output. Keep photos and textures opaque. Place cutouts with a plain <img> over the page's own ground; inspect glass and other translucent material carefully. Textures (paper, cloth, grain): crop a clean patch from {s} comp-spec --crop <id> --raw and mirror-tile it to the plate size; generate only when no clean patch exists. The gate scores a texture against its whole region box, so draw its region around clean ground. Then {s} build-phase advance scores all plates against their comp regions. A pass does not replace visual inspection of placement, scale, and alpha. Write no page code before this passes."),
+        "plates" => format!("Produce every plate in the spec ({s} comp-spec --print lists them). For each illustration, photo, or figure, run {s} comp-spec --crop <id> --out <crop.png> and save {s} comp-spec --plate-prompt <id> to a prompt file. For an isolated figure or object on the page ground, add --background transparent to that plate-prompt command. Prefer the harness image tool with the crop as reference and that prompt; request native transparent PNG for cutouts. With the API fallback, run {s} generate-image --ref <crop.png> --prompt-file <prompt.txt> --out <plate.png> --size <WxH> --quality high; add --background transparent for cutouts. Create the output directory first and choose a supported size matching the region's aspect at least 1.5x its pixel size. generate-image embeds the prompt; after a harness generation run {s} embed-prompt <plate.png> --prompt-file <prompt.txt>. Preserve white paint, fine edges, and interior holes; verify alpha and inspect the cutout on light and dark grounds. Do not chroma-key native transparent output. Keep photos and textures opaque. Place cutouts with a plain <img> over the page's own ground; inspect glass and other translucent material carefully. Textures (paper, cloth, grain): crop a clean patch from {s} comp-spec --crop <id> --raw and mirror-tile it to the plate size; generate only when no clean patch exists. The gate scores a texture against its whole region box, so draw its region around clean ground. Keep candidate crops in separate files. Test each with {s} build-phase check-plate <id> --candidate <png> --json; this does not replace the selected asset or advance state. Inspect the candidate before explicitly selecting it at the spec plate path. Then {s} build-phase advance scores all selected plates against their comp regions. A pass does not replace visual inspection of placement, scale, and alpha. Write no page code before this passes."),
         "hero" => format!(
             "Run {s} build-phase scaffold first: it writes the measured layout as CSS custom properties (.impeccable/build/scaffold/layout.css, --r-<id>-x/y/w/h in % of the comp, plus cap height, font-size, family, and weight where measured) and a reference page with every region at its box. Bind those numbers to your own markup (an element per region, its box from the properties); the reference is a check, not the page, and overlapping boxes are overlapping boxes. Build only the first viewport at {}. Copy the comp's words verbatim in this phase (headline, labels, table cells, footer): the user approved that comp with those words, and rewriting is a later, stated decision, never a silent one here. Set every text region's font-size from its measured cap height and its face from the ranking. Plates first: place every plate at its spec box ({s} comp-spec --print lists boxes as percentages of the viewport) with object-fit: cover before writing a line of text or a control, capture into {HERO_REPRO}, and run {s} build-phase record hero (not advance) once so you see the plate regions read as match before text exists; then lay the semantic layer (text, controls, rules) over the plates from the spec's palette and boxes, capture, advance. When it fails, open the region crops it lists first, in order, then fix; do not build past the hero until it passes.",
             bp.unwrap_or("the comp size")
@@ -2404,6 +2427,58 @@ fn next_instruction(io: &Io, state: &Value) -> String {
 #[cfg(test)]
 mod transparency_guidance_tests {
     use super::*;
+
+    #[test]
+    fn candidate_check_never_replaces_selection_or_persists_gate_receipts() {
+        let dir = std::env::temp_dir().join(format!("plate-candidate-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(BUILD_DIR)).unwrap();
+        let image = r::create_image(64,64,[20,70,110,255]);
+        let bytes = png_io::encode_png(&image, &[]).unwrap();
+        let spec = json!({"comp":"comp.png","regions":[{"id":"ground","kind":"texture","medium":"raster",
+            "plate":"selected.png","px":{"x":0,"y":0,"w":64,"h":64},"palette":[{"hex":"#14466e"}]}]}).to_string();
+        for (path, data) in [("comp.png",bytes.as_slice()),("candidate.png",bytes.as_slice()),
+            ("selected.png",b"selected asset must survive".as_slice()),(SPEC_PATH,spec.as_bytes()),
+            (".impeccable/build/state.json",b"{\"phase\":\"plates\",\"attempts\":7}".as_slice())] {
+            std::fs::write(dir.join(path),data).unwrap();
+        }
+        let before = ["comp.png","candidate.png","selected.png",SPEC_PATH,".impeccable/build/state.json"]
+            .map(|path| (path,std::fs::read(dir.join(path)).unwrap()));
+        let (mut io, output) = Io::captured("",dir.clone(),Default::default());
+        assert_eq!(run(&["check-plate","ground","--candidate","candidate.png","--json"].map(String::from), &mut io, &no_organic_scan),0);
+        let report: Value = serde_json::from_slice(&output.stdout.borrow()).unwrap();
+        assert_eq!(report["stateChanged"],false);
+        assert_eq!(report["plates"][0]["file"],"candidate.png");
+        assert_eq!(report["plates"][0]["status"],"ok");
+        for (path, bytes) in before { assert_eq!(std::fs::read(dir.join(path)).unwrap(),bytes); }
+        assert_eq!(run(&["check-plate","unknown","--candidate","candidate.png"].map(String::from), &mut io, &no_organic_scan),1);
+        // A candidate still goes through the exact same anti-copy validation.
+        let mut photo: Value = serde_json::from_str(&spec).unwrap();
+        photo["regions"][0]["kind"] = json!("image");
+        std::fs::write(dir.join(SPEC_PATH),photo.to_string()).unwrap();
+        let (mut io, output) = Io::captured("",dir.clone(),Default::default());
+        assert_eq!(run(&["check-plate","ground","--candidate","candidate.png","--json"].map(String::from), &mut io, &no_organic_scan),2);
+        assert!(String::from_utf8(output.stdout.borrow().clone()).unwrap().contains("comp crop"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn plate_score_excludes_the_same_occluded_pixels_on_both_sides() {
+        let mut comp = r::create_image(128, 64, [30, 80, 120, 255]);
+        r::fill_rect(&mut comp, 10., 8., 55., 48., [210., 140., 70., 255.]);
+        let region = json!({"id":"photo","kind":"image","medium":"raster",
+            "px":{"x":0,"y":0,"w":128,"h":64},"palette":[{"hex":"#1e5078"}]});
+        let spec = json!({"regions":[region,{"id":"label","kind":"text",
+            "px":{"x":80,"y":0,"w":48,"h":24}}]});
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        let original = score_plate_reference(&reference, &comp, Some("image"));
+        let mut hidden_change = comp.clone();
+        r::fill_rect(&mut hidden_change, 80., 0., 48., 24., [255., 0., 190., 255.]);
+        let hidden = score_plate_reference(&reference, &hidden_change, Some("image"));
+        assert_eq!(original.to_json(), hidden.to_json());
+        let missing = r::create_image(128, 64, [30, 80, 120, 255]);
+        let missing = score_plate_reference(&reference, &missing, Some("image"));
+        assert!(!plate_verdict(&spec["regions"][0], &missing).0);
+    }
 
     #[test]
     fn control_lettering_gets_the_same_measurements_as_text_without_reclassification() {
@@ -2704,10 +2779,41 @@ pub fn run(argv: &[String], io: &mut Io, organic_scan: OrganicScan) -> i32 {
 pub fn run_with_renderer(argv: &[String],io: &mut Io,organic_scan: OrganicScan,renderer: Option<&dyn EntryRenderer>) -> i32 {
     let cmd = argv.first().map(String::as_str);
     if cmd.is_none() || flag(argv, "help") {
+        io.out("CANDIDATE CHECK: build-phase check-plate <region-id> --candidate <png> [--json] validates a separate file with the normal plate gate; never replaces the selected asset, records approval, or advances the phase.\n");
         io.err("usage: build-phase.mjs start --comp <png> [--breakpoint WxH] [--artifact <entry file>] [--session-id <id>] | status [--json] | completion [--session-id <id>] | advance [--force --reason \"...\"] | record hero --build <png> | scaffold | note \"<text>\" | finish --disposition <word>\n");
         return 1;
     }
     let cmd = cmd.unwrap();
+    if cmd == "check-plate" {
+        let Some(id) = argv.get(1).filter(|id| !id.starts_with('-')) else {
+            io.err("usage: build-phase check-plate <region-id> --candidate <png> [--json]\n");
+            return 1;
+        };
+        let Some(candidate) = arg(argv, "candidate").filter(|path| !path.is_empty()) else {
+            io.err("build-phase: check-plate needs --candidate <png>; it never replaces the selected plate\n");
+            return 1;
+        };
+        let Some(mut spec) = load_spec(&abs(io, SPEC_PATH)) else {
+            io.err("build-phase: no measured spec; run comp-spec --help for region coordinates\n");
+            return 1;
+        };
+        let region = spec["regions"].as_array_mut().and_then(|regions| regions.iter_mut().find(|r| r["id"] == id.as_str()));
+        let Some(region) = region.filter(|r| r["medium"] == "raster") else {
+            io.err(&format!("build-phase: {id} is not a measured raster region\n"));
+            return 1;
+        };
+        region["plate"] = json!(candidate);
+        let gate = gate_plates_for(io, &spec, Some(id));
+        if flag(argv, "json") {
+            io.out(&format!("{}\n", util::json_pretty(&json!({"ok":gate.ok,"candidate":candidate,
+                "region":id,"reasons":gate.reasons,"plates":gate.plates,"stateChanged":false}))));
+        } else {
+            io.out(&format!("{} {id}: {candidate} (candidate only; selected plate and build state unchanged)\n",
+                if gate.ok { "PASS" } else { "FAIL" }));
+            for reason in &gate.reasons { io.out(&format!("  - {reason}\n")); }
+        }
+        return if gate.ok { 0 } else { 2 };
+    }
     if cmd == "completion" {
         let state = load_state(io);
         let session_id = arg(argv, "session-id").or_else(|| io.env("IMPECCABLE_SESSION_ID"))

@@ -456,12 +456,26 @@ pub fn measure_regions(comp: &Image, regions_input: &Value, comp_path: &str) -> 
             }
         }
         // box: explicit raw.box (x is number) else gridToBox(raw.grid)
-        let has_box = raw
+        let has_normalized_box = raw
             .get("box")
             .and_then(|b| b.get("x"))
             .map(|x| x.is_number())
             .unwrap_or(false);
-        let mut boxf: (f64, f64, f64, f64) = if has_box {
+        let has_pixel_box = raw.get("pixelBox").is_some();
+        let has_box = has_normalized_box || has_pixel_box;
+        let mut boxf: (f64, f64, f64, f64) = if has_pixel_box {
+            if raw.get("box").is_some() || raw.get("grid").is_some() {
+                return Err(format!("region {id}: use pixelBox, box, or grid, not multiple coordinate formats"));
+            }
+            let b = &raw["pixelBox"];
+            let coords: Option<Vec<f64>> = ["x", "y", "w", "h"].iter().map(|key| b[*key].as_f64()).collect();
+            let Some(v) = coords else { return Err(format!("region {id}: pixelBox requires numeric x, y, w, h in original comp pixels")); };
+            if v.iter().any(|v| !v.is_finite() || v.fract() != 0.) || v[0] < 0. || v[1] < 0.
+                || v[2] <= 0. || v[3] <= 0. || v[0] + v[2] > w || v[1] + v[3] > h {
+                return Err(format!("region {id}: pixelBox must use whole pixels within the {w}x{h} comp with positive width and height"));
+            }
+            (v[0] / w, v[1] / h, v[2] / w, v[3] / h)
+        } else if has_normalized_box {
             let b = raw.get("box").unwrap();
             (
                 b.get("x").and_then(Value::as_f64).unwrap_or(0.0),
@@ -882,6 +896,7 @@ fn resolve(io: &Io, p: &str) -> PathBuf {
 pub fn run(argv: &[String], io: &mut Io) -> i32 {
     let spec_path = arg_or(argv, "spec", SPEC_PATH).to_string();
     if flag(argv, "help") || argv.is_empty() {
+        io.out("REGION COORDINATES: use one of grid (coarse inclusive cells), box {x,y,w,h} (fractions of the comp, 0..1), or pixelBox {x,y,w,h} (whole pixels in the original comp). Use exact bounds when an element ends inside a grid cell; do not include neighbouring content.\n");
         io.out("usage: comp-spec.mjs --comp <png> --grid            write .impeccable/build/comp-grid.png (10x10 labeled grid) + palette + bands\n       comp-spec.mjs --comp <png> --regions <json>  measure regions -> .impeccable/build/spec.json\n         regions json: { \"regions\": [ { \"id\": \"art\", \"kind\": \"plate|image|texture|text|control|chrome\", \"grid\": \"E0:J4\", \"note\": \"...\" } ] }\n       comp-spec.mjs --comp <png> --auto            band regions when you have no regions file\n       comp-spec.mjs --print                        the compact spec\n       comp-spec.mjs --crop <id> [--out f] [--scale n]   reference crop of a region (never a shipping asset)\n       comp-spec.mjs --plate-prompt <id> [--background transparent|opaque|auto]  the regeneration prompt for a raster region\n");
         return 0;
     }
@@ -1018,6 +1033,7 @@ pub fn run(argv: &[String], io: &mut Io) -> i32 {
         io.out("  { \"regions\": [ { \"id\": \"exploded-plate\", \"kind\": \"plate\", \"grid\": \"E0:H4\", \"note\": \"exploded carburetor drawing\" }, { \"id\": \"masthead\", \"kind\": \"chrome\", \"grid\": \"A0:J0\", \"note\": \"navy bar\" } ] }\n");
         io.out("  kind: plate | image | texture (painted material: every illustration, photograph, figure, product object, texture; each ships as a raster plate) or text | control | chrome (code draws it). grid: <colrow>:<colrow>, A0 top-left to J9 bottom-right, inclusive.\n");
         io.out("  A texture region is a clean sample cell of the material (ground with no ink on it), not the whole band it covers; the page tiles it. Ink that sits on the material gets its own text/control region.\n");
+        io.out("  For exact edges, replace grid with pixelBox: {\"x\": <left>, \"y\": <top>, \"w\": <width>, \"h\": <height>} in original comp pixels, or box with fractions 0..1. Grid cells are approximate; an asset crop must not include the next section. comp-spec --help lists the command forms.\n");
         return 0;
     }
 
@@ -1111,6 +1127,28 @@ mod reference_tests {
         let region = json!({"id":"art","kind":"plate","medium":"raster",
             "px":{"x":0,"y":0,"w":16,"h":16},"palette":[{"hex":"#e6dcd2"}]});
         (comp, region)
+    }
+
+    #[test]
+    fn exact_pixel_box_excludes_the_neighbouring_section() {
+        let mut comp = r::create_image(301, 101, [20, 70, 110, 255]);
+        r::fill_rect(&mut comp, 0., 61., 301., 40., [240., 180., 10., 255.]);
+        let input = json!({"allowUncovered":true,"regions":[{"id":"photo","kind":"image",
+            "note":"Wide photograph","bleed":true,"pixelBox":{"x":0,"y":0,"w":301,"h":61}}]});
+        let spec = measure_regions(&comp, &input, "comp.png").unwrap();
+        assert_eq!(spec["regions"][0]["px"], json!({"x":0,"y":0,"w":301,"h":61}));
+        let reference = prepare_plate_reference(&comp, &spec, &spec["regions"][0]);
+        assert_eq!((reference.image.width, reference.image.height), (301, 61));
+        assert!(reference.image.data.chunks_exact(4).all(|px| px == [20,70,110,255]));
+        for bad in [json!({"x":0,"y":0,"w":302,"h":61}), json!({"x":0.5,"y":0,"w":300,"h":61}),
+            json!({"x":0,"y":0,"w":0,"h":61}), json!({"x":0,"y":0,"w":301})] {
+            let mut broken = input.clone();
+            broken["regions"][0]["pixelBox"] = bad;
+            assert!(measure_regions(&comp, &broken, "comp.png").unwrap_err().contains("pixelBox"));
+        }
+        let mut ambiguous = input;
+        ambiguous["regions"][0]["grid"] = json!("A0:J5");
+        assert!(measure_regions(&comp, &ambiguous, "comp.png").unwrap_err().contains("multiple"));
     }
 
     #[test]

@@ -180,3 +180,14 @@ only neighbouring pixels leaves the measured crop identical.
 ## Recorded 2026-09-17: reference-bound typography reuse
 
 - `comp-spec-regions`: the written spec adds `compSha256`, a SHA-256 of decoded dimensions and pixels. This binds retained typography to the exact reference when regions are remeasured. Structured comparison verified that only this field changed; stdout, stderr, exit status, regions, palettes and bounds are identical. The failing/passing regression separately verifies preservation and invalidation.
+
+## Recorded 2026-09-17: exact reference bounds and non-destructive plate candidates
+
+Reviewed the three CLI differences before updating their goldens:
+`comp-spec-grid` appends coordinate guidance, `comp-spec-usage` explains grid,
+normalized box and exact pixelBox units, and `build-phase-usage` advertises the
+read-only candidate check. Only those stdout strings changed. Existing image
+files, measurements, exit codes and frozen function vectors were not replaced.
+The plate gate applies reference UI exclusions symmetrically after alignment;
+regressions separately verify hidden-pixel invariance, visible missing-art
+rejection, raw comp-copy rejection and unchanged candidate-check state.
